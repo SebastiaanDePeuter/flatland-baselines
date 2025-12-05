@@ -65,7 +65,7 @@ class DeadLockAvoidancePolicy(DupShortestPathPolicy):
                                  source_direction: int,
                                  target_position=Tuple[int, int],
                                  k: int = 1, debug=False) -> List[Tuple[Waypoint]]:
-            return [distance_walker.walk_to_target2(handle, source_position, source_direction, target_position)]
+            return [distance_walker.walk_to_target2(handle, source_position, source_direction, target_position, max_step=5000)]
 
         super(DeadLockAvoidancePolicy, self).__init__(_get_k_shortest_paths=get_k_shortest_paths)
 
@@ -156,9 +156,9 @@ class DeadLockAvoidancePolicy(DupShortestPathPolicy):
         for agent in self.raiL_env.agents:
             handle = agent.handle
 
-            super()._update_agent(agent, self.raiL_env)
+            replanned = super()._update_agent(agent, self.raiL_env)
 
-            self._build_full_shortest_distance_agent_map(agent, handle)
+            self._build_full_shortest_distance_agent_map(agent, handle, replan = replanned)
             if agent.state == TrainState.DONE or agent.state == TrainState.WAITING:
                 continue
 
@@ -169,15 +169,24 @@ class DeadLockAvoidancePolicy(DupShortestPathPolicy):
         for agent in self.raiL_env.agents:
             all_agent_positions.add(agent.position)
         return all_agent_positions
+    
+    def _agent_remove_planned_positions(self, handle):
+        self.full_shortest_distance_agent_map[handle,:,:] = 0
+        self.shortest_distance_positions_agent_map[handle] = set()
+        for (handle_i, position_i) in list(self.shortest_distance_positions_directions_agent_map.keys()):
+            if handle_i == handle:
+                del self.shortest_distance_positions_directions_agent_map[(handle_i, position_i)]
 
-    def _build_full_shortest_distance_agent_map(self, agent, handle):
-        if self.raiL_env._elapsed_steps == 1:
+    def _build_full_shortest_distance_agent_map(self, agent, handle, replan = False):
+        if self.raiL_env._elapsed_steps == 1 or replan:
+            if replan:
+                self._agent_remove_planned_positions(handle)
             for wp in self._shortest_paths[agent.handle][1:]:
                 position, direction = wp.position, wp.direction
                 self.full_shortest_distance_agent_map[(handle, position[0], position[1])] = 1
                 self.shortest_distance_positions_agent_map[handle].add(position)
                 self.shortest_distance_positions_directions_agent_map[(handle, position)].add(direction)
-        if agent.position is not None and agent.position != agent.old_position:
+        if agent.position is not None and agent.position != agent.old_position and not replan:
             assert agent.position == self._shortest_paths[agent.handle][0].position
             if agent.position not in {wp.position for wp in self._shortest_paths[agent.handle][1:]}:
                 self.full_shortest_distance_agent_map[(handle, agent.position[0], agent.position[1])] = 0
@@ -242,7 +251,7 @@ class DeadLockAvoidancePolicy(DupShortestPathPolicy):
 
         for handle in range(self.raiL_env.get_num_agents()):
             agent = self.raiL_env.agents[handle]
-            if TrainState.DONE > agent.state >= TrainState.WAITING:
+            if TrainState.DONE > agent.state >= TrainState.WAITING and len(self._shortest_paths[agent.handle]) > 1:
                 if self._check_agent_can_move(
                         self.shortest_distance_agent_map[handle],
                         self.shortest_distance_agent_len[handle],

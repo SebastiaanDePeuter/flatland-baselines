@@ -53,28 +53,37 @@ class DupShortestPathPolicy(RailEnvPolicy[RailEnv, RailEnv, RailEnvActions]):
     def _update_agent(self, agent: EnvAgent, env: RailEnv):
         """
         Update `_shortest_paths` and `_remaining_targets`.
-
+        Returns True if a new path was planned for this agent
         """
+        replanned = False
         if agent.state == TrainState.DONE:
             self._shortest_paths.pop(agent.handle, None)
             self._remaining_targets.pop(agent.handle, None)
-            return
+            return False
         if agent.handle not in self._remaining_targets:
             self._remaining_targets[agent.handle] = agent.waypoints
+            assert len(agent.waypoints) == 2, "implementation does not support intermediate waypoints"
         if agent.handle not in self._shortest_paths:
             # TODO https://github.com/flatland-association/flatland-baselines/issues/7 inconsistent: shortest path is shortest path to target, whereas above we update when intermediate target reached....?
             self._shortest_paths[agent.handle] = self.get_k_shortest_paths(agent.handle, env, agent.initial_position, agent.initial_direction, agent.target)[0]
 
         if agent.position is None:
-            return
+            return False
+
+        # This handles two cases where re-planning is necessary:
+        # (1) The agent has gone off-path. This happens is it has moved in the previous step (first two conditions) but has not reached the next point along it shortst path.
+        # (2) The agent't current plan has fewer than 2 steps left. This generally happens if the pathfinding previously did not find a complete path to the target.
+        # In both cases we need to re-plan
+        if  len(self._shortest_paths[agent.handle]) < 2:
+            self._shortest_paths[agent.handle] = self.get_k_shortest_paths(agent.handle, env, agent.position, agent.direction, agent.target)[0]
+            replanned = True
+        elif (agent.old_position is not None) and (agent.position != agent.old_position) and (agent.position != self._shortest_paths[agent.handle][1].position):
+            self._shortest_paths[agent.handle] = self.get_k_shortest_paths(agent.handle, env, agent.position, agent.direction, agent.target)[0]
+            replanned = True
 
         while self._shortest_paths[agent.handle][0].position != agent.position:
             self._shortest_paths[agent.handle] = self._shortest_paths[agent.handle][1:]
         assert self._shortest_paths[agent.handle][0].position == agent.position
 
-        # update shortest path to next intermediate target
-        if agent.position == self._remaining_targets[agent.handle][0]:
-            self._remaining_targets[agent.handle] = self._remaining_targets[agent.handle][1:]
-            if len(self._remaining_targets[agent.handle]) > 0:
-                self._shortest_paths[agent.handle] = \
-                    get_k_shortest_paths(env, agent.position, agent.direction, self._remaining_targets[agent.handle][0].position)[0]
+        return replanned
+
