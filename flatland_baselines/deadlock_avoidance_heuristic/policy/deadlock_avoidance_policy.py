@@ -1,3 +1,4 @@
+import warnings
 from collections import defaultdict
 from functools import lru_cache
 from typing import List, Any, Dict, Set, Tuple, Optional
@@ -39,7 +40,7 @@ class DeadLockAvoidancePolicy(DupShortestPathPolicy):
                  show_debug_plot: bool = False,
                  ):
         super().__init__()
-        
+
         self.loss = 0
         self.action_size = action_size
         self.show_debug_plot = show_debug_plot
@@ -251,7 +252,7 @@ class DeadLockAvoidancePolicy(DupShortestPathPolicy):
 
         for handle in range(self.raiL_env.get_num_agents()):
             agent = self.raiL_env.agents[handle]
-            if TrainState.DONE > agent.state >= TrainState.WAITING and len(self._shortest_paths[agent.handle]) > 1:
+            if TrainState.DONE > agent.state >= TrainState.WAITING:
                 if self._check_agent_can_move(
                         self.shortest_distance_agent_map[handle],
                         self.shortest_distance_agent_len[handle],
@@ -266,7 +267,10 @@ class DeadLockAvoidancePolicy(DupShortestPathPolicy):
                     else:
                         position = agent.initial_position
                         direction = agent.initial_direction
-
+                    # Guard against invalid initial positions:
+                    if len(self._shortest_paths[agent.handle]) < 2:
+                        warnings.warn(f"No shortest path for agent {agent.handle}. Found: {self._shortest_paths[agent.handle]}")
+                        continue
                     next_position = self._shortest_paths[agent.handle][1].position
                     next_direction = self._shortest_paths[agent.handle][1].direction
                     action = self._get_action((position, direction), (next_position, next_direction))
